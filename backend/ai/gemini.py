@@ -16,46 +16,26 @@ from backend.config.config import (
 # Gemini API Engine
 # ============================================================
 #
-# দায়িত্ব:
+# এই ফাইলের দায়িত্ব শুধুমাত্র:
 #
 # 1. Gemini API request
 # 2. Model fallback
 # 3. Retry
 # 4. Response extraction
+# 5. Error handling
 #
-# AI-এর personality / behavior এখানে নেই।
-# Behavior AnswerBuilder.java থেকে আসবে।
+# IMPORTANT:
+#
+# AI personality / behavior / instructions এখানে নেই।
+#
+# সম্পূর্ণ behavior এবং master prompt
+# AnswerBuilder.java থেকে আসবে।
 #
 # ============================================================
 
 
 MODEL_RETRY_COUNT = 2
 RETRY_DELAY_SECONDS = 2
-
-
-# ============================================================
-# PROMPT BUILDER
-# ============================================================
-
-def build_prompt(
-    message,
-    memory_text=""
-):
-    """
-    AnswerBuilder.java থেকে পাওয়া prompt
-    Gemini-তে পাঠানোর জন্য প্রস্তুত করে।
-
-    এখানে কোনো personality বা behavior
-    যোগ করা হবে না।
-    """
-
-    if memory_text:
-        return (
-            f"{memory_text}\n\n"
-            f"{message}"
-        )
-
-    return message
 
 
 # ============================================================
@@ -68,6 +48,10 @@ def _request_model(
 ):
     """
     একটি নির্দিষ্ট Gemini model-এ request পাঠায়।
+
+    এখানে prompt পরিবর্তন করা হয় না।
+    AnswerBuilder.java থেকে পাওয়া prompt
+    সরাসরি Gemini API-তে পাঠানো হয়।
     """
 
     if not GEMINI_API_KEY:
@@ -79,10 +63,40 @@ def _request_model(
             "error": "GEMINI_API_KEY is not configured."
         }
 
+
+    if not model:
+
+        return {
+            "success": False,
+            "status": 500,
+            "retryable": False,
+            "error": "Gemini model is empty."
+        }
+
+
+    if not prompt:
+
+        return {
+            "success": False,
+            "status": 400,
+            "retryable": False,
+            "error": "Gemini prompt is empty."
+        }
+
+
+    # --------------------------------------------------------
+    # API URL
+    # --------------------------------------------------------
+
     url = GEMINI_API_URL.format(
         model=model,
         api_key=GEMINI_API_KEY
     )
+
+
+    # --------------------------------------------------------
+    # REQUEST PAYLOAD
+    # --------------------------------------------------------
 
     payload = {
         "contents": [
@@ -100,6 +114,11 @@ def _request_model(
         }
     }
 
+
+    # ========================================================
+    # HTTP REQUEST
+    # ========================================================
+
     try:
 
         response = requests.post(
@@ -108,6 +127,7 @@ def _request_model(
             timeout=AI_TIMEOUT_SECONDS
         )
 
+
         # ----------------------------------------------------
         # SUCCESS
         # ----------------------------------------------------
@@ -115,6 +135,7 @@ def _request_model(
         if response.status_code == 200:
 
             try:
+
                 data = response.json()
 
             except ValueError:
@@ -128,7 +149,11 @@ def _request_model(
                     )
                 }
 
-            answer = extract_answer(data)
+
+            answer = extract_answer(
+                data
+            )
+
 
             if answer:
 
@@ -139,6 +164,11 @@ def _request_model(
                     "model": model
                 }
 
+
+            # ------------------------------------------------
+            # EMPTY RESPONSE
+            # ------------------------------------------------
+
             return {
                 "success": False,
                 "status": 502,
@@ -147,6 +177,7 @@ def _request_model(
                     "Gemini returned an empty response."
                 )
             }
+
 
         # ----------------------------------------------------
         # RATE LIMIT
@@ -158,11 +189,15 @@ def _request_model(
                 "success": False,
                 "status": 429,
                 "retryable": True,
-                "error": response.text
+                "error": (
+                    "Gemini rate limit reached: "
+                    + response.text
+                )
             }
 
+
         # ----------------------------------------------------
-        # SERVER / TEMPORARY ERROR
+        # TEMPORARY SERVER ERROR
         # ----------------------------------------------------
 
         if 500 <= response.status_code <= 599:
@@ -171,19 +206,33 @@ def _request_model(
                 "success": False,
                 "status": response.status_code,
                 "retryable": True,
-                "error": response.text
+                "error": (
+                    "Gemini server error: "
+                    + response.text
+                )
             }
 
+
         # ----------------------------------------------------
-        # OTHER ERROR
+        # OTHER HTTP ERROR
         # ----------------------------------------------------
 
         return {
             "success": False,
             "status": response.status_code,
             "retryable": False,
-            "error": response.text
+            "error": (
+                "Gemini HTTP "
+                + str(response.status_code)
+                + ": "
+                + response.text
+            )
         }
+
+
+    # ========================================================
+    # TIMEOUT
+    # ========================================================
 
     except requests.exceptions.Timeout:
 
@@ -194,6 +243,11 @@ def _request_model(
             "error": "Gemini request timed out."
         }
 
+
+    # ========================================================
+    # CONNECTION ERROR
+    # ========================================================
+
     except requests.exceptions.ConnectionError as error:
 
         return {
@@ -201,9 +255,15 @@ def _request_model(
             "status": 503,
             "retryable": True,
             "error": (
-                f"Gemini connection error: {error}"
+                "Gemini connection error: "
+                + str(error)
             )
         }
+
+
+    # ========================================================
+    # REQUEST ERROR
+    # ========================================================
 
     except requests.exceptions.RequestException as error:
 
@@ -212,9 +272,15 @@ def _request_model(
             "status": 503,
             "retryable": True,
             "error": (
-                f"Gemini request error: {error}"
+                "Gemini request error: "
+                + str(error)
             )
         }
+
+
+    # ========================================================
+    # UNKNOWN ERROR
+    # ========================================================
 
     except Exception as error:
 
@@ -223,7 +289,8 @@ def _request_model(
             "status": 500,
             "retryable": False,
             "error": (
-                f"Unexpected Gemini error: {error}"
+                "Unexpected Gemini error: "
+                + str(error)
             )
         }
 
@@ -233,72 +300,132 @@ def _request_model(
 # ============================================================
 
 def ask_gemini(
+    prompt=None,
     message=None,
     memory_text="",
     user_message=None,
     memory=None
 ):
     """
-    Gemini model chain চালায়।
+    Gemini model fallback chain চালায়।
 
-    message:
-        server.py থেকে আসা user message।
+    নতুন architecture:
 
-    user_message:
-        backward compatibility-এর জন্য রাখা হয়েছে।
+        AnswerBuilder.java
+                ↓
+             prompt
+                ↓
+            server.py
+                ↓
+          ask_gemini(prompt)
+                ↓
+             Gemini
 
-    memory_text / memory:
-        আগের memory।
+    prompt থাকলে সেটিই সরাসরি Gemini-তে যাবে।
+
+    message / user_message / memory
+    শুধুমাত্র backward compatibility-এর জন্য রাখা হয়েছে।
     """
 
-    # --------------------------------------------------------
-    # MESSAGE COMPATIBILITY
-    # --------------------------------------------------------
 
-    if message is None:
-        message = user_message
+    # ========================================================
+    # PROMPT SELECTION
+    # ========================================================
 
-    if message is None:
-        message = ""
+    #
+    # নতুন system-এ prompt-ই প্রধান।
+    #
 
-    message = str(message).strip()
+    if prompt is not None:
 
-    # --------------------------------------------------------
-    # MEMORY COMPATIBILITY
-    # --------------------------------------------------------
+        prompt = str(
+            prompt
+        ).strip()
 
-    if not memory_text and memory:
-        memory_text = memory
 
-    if memory_text is None:
-        memory_text = ""
+    # ========================================================
+    # BACKWARD COMPATIBILITY
+    # ========================================================
 
-    # --------------------------------------------------------
-    # EMPTY MESSAGE
-    # --------------------------------------------------------
+    #
+    # পুরোনো code যদি prompt না পাঠায়,
+    # তাহলে message ব্যবহার করা যাবে।
+    #
 
-    if not message:
+    if not prompt:
+
+        if message is None:
+
+            message = user_message
+
+
+        if message is None:
+
+            message = ""
+
+
+        message = str(
+            message
+        ).strip()
+
+
+        #
+        # পুরোনো memory support।
+        #
+
+        if not memory_text and memory:
+
+            memory_text = memory
+
+
+        if memory_text is None:
+
+            memory_text = ""
+
+
+        memory_text = str(
+            memory_text
+        ).strip()
+
+
+        #
+        # পুরোনো flow-এর জন্য prompt তৈরি।
+        #
+        # নতুন AnswerBuilder flow-এ এই অংশ ব্যবহার হবে না,
+        # কারণ সেখানে prompt সরাসরি দেওয়া হবে।
+        #
+
+        if memory_text:
+
+            prompt = (
+                memory_text
+                + "\n\n"
+                + message
+            )
+
+        else:
+
+            prompt = message
+
+
+    # ========================================================
+    # EMPTY PROMPT
+    # ========================================================
+
+    if not prompt:
 
         return {
             "success": False,
             "status": 400,
             "answer": "",
             "model": "",
-            "error": "User message is empty."
+            "error": "Gemini prompt is empty."
         }
 
-    # --------------------------------------------------------
-    # BUILD PROMPT
-    # --------------------------------------------------------
 
-    prompt = build_prompt(
-        message,
-        memory_text
-    )
-
-    # --------------------------------------------------------
-    # NO MODEL
-    # --------------------------------------------------------
+    # ========================================================
+    # MODEL CHECK
+    # ========================================================
 
     if not GEMINI_MODELS:
 
@@ -312,7 +439,9 @@ def ask_gemini(
             )
         }
 
+
     errors = []
+
 
     # ========================================================
     # MODEL FALLBACK CHAIN
@@ -320,10 +449,24 @@ def ask_gemini(
 
     for model in GEMINI_MODELS:
 
-        model = model.strip()
+        if model is None:
+
+            continue
+
+
+        model = str(
+            model
+        ).strip()
+
 
         if not model:
+
             continue
+
+
+        # ----------------------------------------------------
+        # RETRY CURRENT MODEL
+        # ----------------------------------------------------
 
         for attempt in range(
             MODEL_RETRY_COUNT
@@ -334,13 +477,18 @@ def ask_gemini(
                 prompt
             )
 
+
             # ------------------------------------------------
             # SUCCESS
             # ------------------------------------------------
 
-            if result.get("success"):
+            if result.get(
+                "success",
+                False
+            ):
 
                 return result
+
 
             # ------------------------------------------------
             # ERROR
@@ -351,31 +499,38 @@ def ask_gemini(
                 "Unknown Gemini error."
             )
 
+
             errors.append(
                 f"{model} "
                 f"(attempt {attempt + 1}): "
                 f"{error_message}"
             )
 
+
             # ------------------------------------------------
-            # NON-RETRYABLE
+            # NON-RETRYABLE ERROR
             # ------------------------------------------------
 
             if not result.get(
                 "retryable",
                 False
             ):
+
                 break
 
+
             # ------------------------------------------------
-            # RETRY
+            # RETRY DELAY
             # ------------------------------------------------
 
-            if attempt < MODEL_RETRY_COUNT - 1:
+            if attempt < (
+                MODEL_RETRY_COUNT - 1
+            ):
 
                 time.sleep(
                     RETRY_DELAY_SECONDS
                 )
+
 
     # ========================================================
     # ALL MODELS FAILED
@@ -397,47 +552,110 @@ def ask_gemini(
 # RESPONSE EXTRACTION
 # ============================================================
 
-def extract_answer(data):
+def extract_answer(
+    data
+):
     """
     Gemini JSON response থেকে শুধু text বের করে।
     """
 
     try:
 
+        if not isinstance(
+            data,
+            dict
+        ):
+
+            return ""
+
+
         candidates = data.get(
             "candidates",
             []
         )
 
-        if not candidates:
+
+        if not isinstance(
+            candidates,
+            list
+        ):
+
             return ""
 
+
+        if not candidates:
+
+            return ""
+
+
         candidate = candidates[0]
+
+
+        if not isinstance(
+            candidate,
+            dict
+        ):
+
+            return ""
+
 
         content = candidate.get(
             "content",
             {}
         )
 
+
+        if not isinstance(
+            content,
+            dict
+        ):
+
+            return ""
+
+
         parts = content.get(
             "parts",
             []
         )
 
+
+        if not isinstance(
+            parts,
+            list
+        ):
+
+            return ""
+
+
         texts = []
+
 
         for part in parts:
 
-            text = part.get("text")
+            if not isinstance(
+                part,
+                dict
+            ):
+
+                continue
+
+
+            text = part.get(
+                "text"
+            )
+
 
             if text:
+
                 texts.append(
                     str(text)
                 )
 
+
         return "\n".join(
             texts
         ).strip()
+
 
     except Exception:
 
