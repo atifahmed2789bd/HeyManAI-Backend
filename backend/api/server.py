@@ -10,7 +10,6 @@ from backend.ai.gemini import ask_gemini
 
 from backend.memory.memory import (
     save_message,
-    get_relevant_memory,
 )
 
 
@@ -20,13 +19,13 @@ from backend.memory.memory import (
 
 app = Flask(__name__)
 
-# Large JSON request/response support.
-# Do not impose a small request-size limit here.
+# Large request/response support.
+# No small request-size limit.
 app.config["MAX_CONTENT_LENGTH"] = None
 
 
 # ============================================================
-# Home
+# HOME
 # ============================================================
 
 @app.route("/", methods=["GET"])
@@ -40,7 +39,7 @@ def home():
 
 
 # ============================================================
-# Health
+# HEALTH
 # ============================================================
 
 @app.route("/api/health", methods=["GET"])
@@ -54,7 +53,7 @@ def health():
 
 
 # ============================================================
-# Chat
+# CHAT
 # ============================================================
 
 @app.route("/api/chat", methods=["POST"])
@@ -63,7 +62,7 @@ def chat():
     try:
 
         # ----------------------------------------------------
-        # Read JSON
+        # READ JSON
         # ----------------------------------------------------
 
         data = request.get_json(
@@ -79,7 +78,7 @@ def chat():
 
 
         # ----------------------------------------------------
-        # Read message
+        # READ USER MESSAGE
         # ----------------------------------------------------
 
         message = data.get(
@@ -96,7 +95,6 @@ def chat():
                 "error": "Message must be a string."
             }), 400
 
-
         message = message.strip()
 
 
@@ -109,7 +107,42 @@ def chat():
 
 
         # ----------------------------------------------------
-        # Save user message
+        # READ MASTER PROMPT
+        # ----------------------------------------------------
+        #
+        # AnswerBuilder.java থেকে তৈরি করা সম্পূর্ণ prompt
+        # এখানে গ্রহণ করা হবে।
+        #
+        # Backend নিজে কোনো behavior বা personality তৈরি করবে না।
+        # ----------------------------------------------------
+
+        prompt = data.get(
+            "prompt"
+        )
+
+        if not isinstance(
+            prompt,
+            str
+        ):
+
+            return jsonify({
+                "success": False,
+                "error": "Prompt must be a string."
+            }), 400
+
+        prompt = prompt.strip()
+
+
+        if not prompt:
+
+            return jsonify({
+                "success": False,
+                "error": "Prompt is empty."
+            }), 400
+
+
+        # ----------------------------------------------------
+        # SAVE USER MESSAGE
         # ----------------------------------------------------
 
         save_message(
@@ -119,26 +152,24 @@ def chat():
 
 
         # ----------------------------------------------------
-        # Retrieve relevant memory
+        # ASK GEMINI
         # ----------------------------------------------------
-
-        memory = get_relevant_memory(
-            message
-        )
-
-
-        # ----------------------------------------------------
-        # Ask Gemini
+        #
+        # গুরুত্বপূর্ণ:
+        #
+        # Gemini-কে AnswerBuilder-এর তৈরি করা prompt-ই
+        # পাঠানো হচ্ছে।
+        #
+        # server.py কোনো নতুন behavior যোগ করছে না।
         # ----------------------------------------------------
 
         result = ask_gemini(
-            message=message,
-            memory=memory
+            prompt=prompt
         )
 
 
         # ----------------------------------------------------
-        # Check Gemini result
+        # CHECK GEMINI RESULT
         # ----------------------------------------------------
 
         if not isinstance(
@@ -167,7 +198,7 @@ def chat():
 
 
         # ----------------------------------------------------
-        # Get answer
+        # GET ANSWER
         # ----------------------------------------------------
 
         answer = result.get(
@@ -199,7 +230,7 @@ def chat():
 
 
         # ----------------------------------------------------
-        # Save assistant response
+        # SAVE ASSISTANT RESPONSE
         # ----------------------------------------------------
 
         save_message(
@@ -209,7 +240,7 @@ def chat():
 
 
         # ----------------------------------------------------
-        # Return complete response
+        # RETURN COMPLETE RESPONSE
         # ----------------------------------------------------
 
         return jsonify({
@@ -219,7 +250,7 @@ def chat():
 
 
     # ========================================================
-    # Error Handling
+    # ERROR HANDLING
     # ========================================================
 
     except Exception as e:
@@ -231,7 +262,7 @@ def chat():
 
 
 # ============================================================
-# Server Start
+# SERVER START
 # ============================================================
 
 if __name__ == "__main__":
