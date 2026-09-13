@@ -10,6 +10,7 @@ from backend.ai.gemini import ask_gemini
 
 from backend.memory.memory import (
     save_message,
+    get_relevant_memory,
 )
 
 
@@ -19,129 +20,196 @@ from backend.memory.memory import (
 
 app = Flask(__name__)
 
+# Large JSON request/response support.
+# Do not impose a small request-size limit here.
+app.config["MAX_CONTENT_LENGTH"] = None
 
-# ------------------------------------------------------------
-# Root
-# ------------------------------------------------------------
+
+# ============================================================
+# Home
+# ============================================================
 
 @app.route("/", methods=["GET"])
-def root():
+def home():
+
     return jsonify({
         "success": True,
-        "service": "HeyManAI Backend",
+        "service": "HeyManAI API",
         "status": "online"
     })
 
 
-# ------------------------------------------------------------
-# Health Check
-# ------------------------------------------------------------
+# ============================================================
+# Health
+# ============================================================
 
 @app.route("/api/health", methods=["GET"])
 def health():
+
     return jsonify({
         "success": True,
+        "service": "HeyManAI API",
         "status": "healthy"
     })
 
 
-# ------------------------------------------------------------
-# Chat API
-# ------------------------------------------------------------
+# ============================================================
+# Chat
+# ============================================================
 
 @app.route("/api/chat", methods=["POST"])
 def chat():
+
     try:
+
+        # ----------------------------------------------------
+        # Read JSON
+        # ----------------------------------------------------
+
         data = request.get_json(
             silent=True
         )
 
-        if not data:
+        if not isinstance(data, dict):
+
             return jsonify({
                 "success": False,
-                "answer": "",
                 "error": "Invalid JSON request."
             }), 400
 
+
+        # ----------------------------------------------------
+        # Read message
+        # ----------------------------------------------------
+
         message = data.get(
-            "message",
-            ""
+            "message"
         )
 
-        prompt = data.get(
-            "prompt",
-            ""
-        )
+        if not isinstance(
+            message,
+            str
+        ):
 
-        # ----------------------------------------------------
-        # Prompt is preferred when Android sends a full prompt.
-        # Otherwise use message directly.
-        # ----------------------------------------------------
-
-        if prompt and str(prompt).strip():
-            gemini_input = str(prompt).strip()
-
-        elif message and str(message).strip():
-            gemini_input = str(message).strip()
-
-        else:
             return jsonify({
                 "success": False,
-                "answer": "",
-                "error": "Message is required."
+                "error": "Message must be a string."
             }), 400
 
+
+        message = message.strip()
+
+
+        if not message:
+
+            return jsonify({
+                "success": False,
+                "error": "Message is empty."
+            }), 400
+
+
         # ----------------------------------------------------
-        # Save original user message
+        # Save user message
         # ----------------------------------------------------
 
-        if message and str(message).strip():
-            save_message(
-                "user",
-                str(message).strip()
-            )
+        save_message(
+            role="user",
+            content=message
+        )
+
 
         # ----------------------------------------------------
-        # Send prompt to Gemini
+        # Retrieve relevant memory
+        # ----------------------------------------------------
+
+        memory = get_relevant_memory(
+            message
+        )
+
+
+        # ----------------------------------------------------
+        # Ask Gemini
         # ----------------------------------------------------
 
         result = ask_gemini(
-            gemini_input
+            message=message,
+            memory=memory
         )
 
-        if not result.get("success"):
+
+        # ----------------------------------------------------
+        # Check Gemini result
+        # ----------------------------------------------------
+
+        if not isinstance(
+            result,
+            dict
+        ):
+
             return jsonify({
                 "success": False,
-                "answer": "",
+                "error": "Invalid Gemini response."
+            }), 500
+
+
+        if not result.get(
+            "success",
+            False
+        ):
+
+            return jsonify({
+                "success": False,
                 "error": result.get(
                     "error",
                     "Gemini request failed."
                 )
-            }), 502
+            }), 500
+
+
+        # ----------------------------------------------------
+        # Get answer
+        # ----------------------------------------------------
 
         answer = result.get(
             "answer",
             ""
-        ).strip()
+        )
 
-        if not answer:
+
+        if not isinstance(
+            answer,
+            str
+        ):
+
             return jsonify({
                 "success": False,
-                "answer": "",
-                "error": "Empty AI response."
-            }), 502
+                "error": "AI response is invalid."
+            }), 500
+
+
+        answer = answer.strip()
+
+
+        if not answer:
+
+            return jsonify({
+                "success": False,
+                "error": "AI returned an empty response."
+            }), 500
+
 
         # ----------------------------------------------------
         # Save assistant response
         # ----------------------------------------------------
 
         save_message(
-            "assistant",
-            answer
+            role="assistant",
+            content=answer
         )
 
+
         # ----------------------------------------------------
-        # Return response to Android
+        # Return complete response
         # ----------------------------------------------------
 
         return jsonify({
@@ -149,19 +217,25 @@ def chat():
             "answer": answer
         })
 
-    except Exception as error:
+
+    # ========================================================
+    # Error Handling
+    # ========================================================
+
+    except Exception as e:
+
         return jsonify({
             "success": False,
-            "answer": "",
-            "error": str(error)
+            "error": str(e)
         }), 500
 
 
-# ------------------------------------------------------------
-# Start Server
-# ------------------------------------------------------------
+# ============================================================
+# Server Start
+# ============================================================
 
 if __name__ == "__main__":
+
     app.run(
         host=API_HOST,
         port=API_PORT,
