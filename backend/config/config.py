@@ -2,6 +2,26 @@ import os
 
 
 # ============================================================
+# HeyManAI Backend Configuration
+# ============================================================
+#
+# এই ফাইলের দায়িত্ব:
+#
+# 1. Server configuration
+# 2. Gemini API configuration
+# 3. Gemini model fallback configuration
+# 4. AI generation configuration
+# 5. Large response configuration
+# 6. Memory configuration
+# 7. Feature configuration
+#
+# AI personality / behavior এখানে থাকবে না।
+# Personality / behavior AnswerBuilder.java থেকে আসবে।
+#
+# ============================================================
+
+
+# ============================================================
 # SERVER
 # ============================================================
 
@@ -10,6 +30,7 @@ API_HOST = os.getenv(
     "0.0.0.0"
 )
 
+
 API_PORT = int(
     os.getenv(
         "HEYMANAI_API_PORT",
@@ -17,11 +38,12 @@ API_PORT = int(
     )
 )
 
+
 DEBUG_MODE = (
     os.getenv(
         "HEYMANAI_DEBUG",
         "false"
-    ).lower() == "true"
+    ).strip().lower() == "true"
 )
 
 
@@ -32,25 +54,29 @@ DEBUG_MODE = (
 GEMINI_API_KEY = os.getenv(
     "GEMINI_API_KEY",
     ""
-)
+).strip()
 
 
 # ============================================================
 # GEMINI MODEL FALLBACK CHAIN
 # ============================================================
 #
-# Model 1 ব্যর্থ হলে Model 2
-# Model 2 ব্যর্থ হলে Model 3
-# এভাবে সব model পরীক্ষা করা হবে।
-#
 # Render Environment Variable:
 #
 # GEMINI_MODELS=model1,model2,model3
 #
-# অথবা নিচের default list ব্যবহার হবে।
+# উদাহরণ:
+#
+# GEMINI_MODELS=gemini-3.8-flash,gemini-3.7-flash
+#
+# Environment variable না থাকলে নিচের default models
+# ব্যবহার করা হবে।
+#
+# প্রথম model ব্যর্থ হলে পরের model পরীক্ষা করা হবে।
+#
 # ============================================================
 
-_default_models = [
+DEFAULT_GEMINI_MODELS = [
     "gemini-3.8-flash",
     "gemini-3.7-flash",
 ]
@@ -72,15 +98,11 @@ if _model_environment:
 
 else:
 
-    GEMINI_MODELS = _default_models
+    GEMINI_MODELS = DEFAULT_GEMINI_MODELS.copy()
 
 
 # ============================================================
 # BACKWARD COMPATIBILITY
-# ============================================================
-#
-# পুরোনো code যদি GEMINI_MODEL ব্যবহার করে,
-# তাহলে প্রথম configured model ব্যবহার করবে।
 # ============================================================
 
 GEMINI_MODEL = (
@@ -105,7 +127,13 @@ GEMINI_API_URL = (
 # AI GENERATION
 # ============================================================
 
-AI_TEMPERATURE = 0.7
+AI_TEMPERATURE = float(
+    os.getenv(
+        "HEYMANAI_TEMPERATURE",
+        "0.7"
+    )
+)
+
 
 AI_MAX_OUTPUT_TOKENS = int(
     os.getenv(
@@ -113,6 +141,7 @@ AI_MAX_OUTPUT_TOKENS = int(
         "65536"
     )
 )
+
 
 AI_TIMEOUT_SECONDS = int(
     os.getenv(
@@ -128,7 +157,9 @@ AI_TIMEOUT_SECONDS = int(
 
 LARGE_RESPONSE_ENABLED = True
 
+
 MAX_RESPONSE_WORDS = 50000
+
 
 TRUNCATE_LARGE_RESPONSES = False
 
@@ -139,6 +170,16 @@ TRUNCATE_LARGE_RESPONSES = False
 
 MEMORY_ENABLED = True
 
+
+# ------------------------------------------------------------
+# এই সংখ্যা storage limit নয়।
+#
+# এটি শুধুমাত্র relevant memory retrieval-এর default
+# result count হিসেবে ব্যবহার করা যেতে পারে।
+#
+# পুরোনো conversation automatically delete হবে না।
+# ------------------------------------------------------------
+
 MEMORY_RELEVANT_RESULTS = 12
 
 
@@ -147,6 +188,7 @@ MEMORY_RELEVANT_RESULTS = 12
 # ============================================================
 
 VOICE_INPUT_ENABLED = True
+
 
 VOICE_OUTPUT_ENABLED = True
 
@@ -157,9 +199,12 @@ VOICE_OUTPUT_ENABLED = True
 
 TIME_ENABLED = True
 
+
 DATE_ENABLED = True
 
+
 DAY_ENABLED = True
+
 
 WEATHER_ENABLED = True
 
@@ -167,7 +212,13 @@ WEATHER_ENABLED = True
 # ============================================================
 # HEYMANAI IDENTITY
 # ============================================================
+#
+# এগুলো configuration-level identity values।
+# Detailed behavior AnswerBuilder.java-তে থাকবে।
+#
+# ============================================================
 
 HEYMAN_NAME = "HeyMan"
+
 
 USER_TITLE = "বস"
