@@ -12,229 +12,91 @@ from backend.config.config import (
 
 
 # ============================================================
-# FALLBACK SETTINGS
+# HeyManAI
+# Gemini API Engine
+# ============================================================
+#
+# দায়িত্ব:
+#
+# 1. Gemini API-তে request পাঠানো
+# 2. একাধিক Gemini model fallback করা
+# 3. Temporary API error হলে retry করা
+# 4. Gemini response থেকে text বের করা
+#
+# গুরুত্বপূর্ণ:
+#
+# AI-এর আচরণ / personality / response style
+# এখানে নির্ধারণ করা হবে না।
+#
+# এসব নির্দেশনা AnswerBuilder.java থেকে আসবে।
+#
 # ============================================================
 
-# একটি model সাময়িকভাবে ব্যর্থ হলে একই model-এ
-# সর্বোচ্চ কতবার পুনরায় চেষ্টা করা হবে।
-MODEL_RETRY_COUNT = 2
 
-# Retry-এর মাঝে অপেক্ষা।
+MODEL_RETRY_COUNT = 2
 RETRY_DELAY_SECONDS = 2
 
 
-def ask_gemini(
-    message,
-    memory=None
-):
+# ============================================================
+# PROMPT BUILDER
+# ============================================================
+
+def build_prompt(user_message, memory_text=""):
     """
-    ============================================================
-    HeyManAI Gemini API Handler
-    ============================================================
+    Gemini-তে পাঠানোর জন্য basic prompt তৈরি করে।
 
-    দায়িত্ব:
-
-    1. User message গ্রহণ করা
-    2. Relevant memory যুক্ত করা
-    3. সব configured Gemini model পরীক্ষা করা
-    4. Model failure হলে পরের model-এ fallback করা
-    5. Temporary error হলে retry করা
-    6. Large response support করা
-    7. সফল AI response ফেরত দেওয়া
-
-    ============================================================
+    এখানে কোনো personality বা behavior instruction নেই।
+    AnswerBuilder.java থেকে পাওয়া prompt/message 그대로
+    Gemini-তে পাঠানো হবে।
     """
 
-    if not isinstance(message, str):
-        return {
-            "success": False,
-            "error": "Message must be a string."
-        }
-
-    message = message.strip()
-
-    if not message:
-        return {
-            "success": False,
-            "error": "Message is empty."
-        }
-
-    if not GEMINI_API_KEY:
-        return {
-            "success": False,
-            "error": "Gemini API key is not configured."
-        }
-
-    # ========================================================
-    # MODEL LIST CHECK
-    # ========================================================
-
-    if not GEMINI_MODELS:
-
-        return {
-            "success": False,
-            "error": "No Gemini models are configured."
-        }
-
-    # ========================================================
-    # BUILD PROMPT
-    # ========================================================
-
-    try:
-
-        prompt = build_prompt(
-            message=message,
-            memory=memory
+    if memory_text:
+        return (
+            f"{memory_text}\n\n"
+            f"{user_message}"
         )
 
-    except Exception as e:
-
-        return {
-            "success": False,
-            "error": f"Prompt build error: {str(e)}"
-        }
-
-    # ========================================================
-    # FALLBACK CHAIN
-    # ========================================================
-
-    errors = []
-
-    for model in GEMINI_MODELS:
-
-        if not isinstance(model, str):
-            continue
-
-        model = model.strip()
-
-        if not model:
-            continue
-
-        # ----------------------------------------------------
-        # একই model-এর জন্য retry
-        # ----------------------------------------------------
-
-        for attempt in range(
-                1,
-                MODEL_RETRY_COUNT + 1
-        ):
-
-            result = request_model(
-                model=model,
-                prompt=prompt
-            )
-
-            if result.get("success"):
-
-                return {
-                    "success": True,
-                    "answer": result.get(
-                        "answer",
-                        ""
-                    ),
-                    "model": model
-                }
-
-            error = result.get(
-                "error",
-                "Unknown Gemini error."
-            )
-
-            status_code = result.get(
-                "status_code"
-            )
-
-            errors.append(
-                f"{model} "
-                f"(attempt {attempt}): "
-                f"{error}"
-            )
-
-            # ------------------------------------------------
-            # Retryযোগ্য error হলে আবার চেষ্টা
-            # ------------------------------------------------
-
-            if is_retryable_error(
-                    status_code
-            ):
-
-                if attempt < MODEL_RETRY_COUNT:
-
-                    time.sleep(
-                        RETRY_DELAY_SECONDS
-                    )
-
-                    continue
-
-            # ------------------------------------------------
-            # Retry করার দরকার নেই
-            # পরের model-এ যাওয়া হবে
-            # ------------------------------------------------
-
-            break
-
-    # ========================================================
-    # ALL MODELS FAILED
-    # ========================================================
-
-    if errors:
-
-        return {
-            "success": False,
-            "error": (
-                "All configured Gemini models failed.\n"
-                + "\n".join(errors)
-            )
-        }
-
-    return {
-        "success": False,
-        "error": "No valid Gemini model was available."
-    }
+    return user_message
 
 
 # ============================================================
-# SINGLE MODEL REQUEST
+# GEMINI REQUEST
 # ============================================================
 
-def request_model(
-    model,
-    prompt
-):
+def _request_model(model, prompt):
     """
     একটি নির্দিষ্ট Gemini model-এ request পাঠায়।
     """
 
-    try:
-
-        url = (
-            GEMINI_API_URL
-            .replace(
-                "{model}",
-                model
-            )
-            .replace(
-                "{api_key}",
-                GEMINI_API_KEY
-            )
-        )
-
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        {
-                            "text": prompt
-                        }
-                    ]
-                }
-            ],
-            "generationConfig": {
-                "temperature": AI_TEMPERATURE,
-                "maxOutputTokens": AI_MAX_OUTPUT_TOKENS
-            }
+    if not GEMINI_API_KEY:
+        return {
+            "success": False,
+            "status": 500,
+            "error": "GEMINI_API_KEY is not configured."
         }
+
+    url = GEMINI_API_URL.format(
+        model=model,
+        api_key=GEMINI_API_KEY
+    )
+
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {
+                        "text": prompt
+                    }
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": AI_TEMPERATURE,
+            "maxOutputTokens": AI_MAX_OUTPUT_TOKENS
+        }
+    }
+
+    try:
 
         response = requests.post(
             url,
@@ -242,318 +104,257 @@ def request_model(
             timeout=AI_TIMEOUT_SECONDS
         )
 
-        status_code = response.status_code
+        # ----------------------------------------------------
+        # Success
+        # ----------------------------------------------------
 
-        # ====================================================
-        # SUCCESS
-        # ====================================================
-
-        if status_code == 200:
+        if response.status_code == 200:
 
             try:
-
                 data = response.json()
-
             except ValueError:
-
                 return {
                     "success": False,
-                    "status_code": status_code,
-                    "error": (
-                        "Gemini returned invalid JSON."
-                    )
+                    "status": 502,
+                    "error": "Gemini returned invalid JSON."
                 }
 
-            answer = extract_answer(
-                data
-            )
+            answer = extract_answer(data)
 
-            if not answer:
-
+            if answer:
                 return {
-                    "success": False,
-                    "status_code": status_code,
-                    "error": (
-                        "Gemini returned an empty response."
-                    )
+                    "success": True,
+                    "status": 200,
+                    "answer": answer,
+                    "model": model
                 }
 
             return {
-                "success": True,
-                "answer": answer
+                "success": False,
+                "status": 502,
+                "error": "Gemini returned an empty response."
             }
 
-        # ====================================================
-        # API ERROR
-        # ====================================================
+        # ----------------------------------------------------
+        # Retryable errors
+        # ----------------------------------------------------
+
+        if response.status_code == 429:
+
+            return {
+                "success": False,
+                "status": 429,
+                "retryable": True,
+                "error": response.text
+            }
+
+        if 500 <= response.status_code <= 599:
+
+            return {
+                "success": False,
+                "status": response.status_code,
+                "retryable": True,
+                "error": response.text
+            }
+
+        # ----------------------------------------------------
+        # Non-retryable error
+        # ----------------------------------------------------
 
         return {
             "success": False,
-            "status_code": status_code,
-            "error": (
-                f"Gemini API error "
-                f"{status_code}: "
-                f"{response.text}"
-            )
+            "status": response.status_code,
+            "retryable": False,
+            "error": response.text
         }
 
     except requests.exceptions.Timeout:
 
         return {
             "success": False,
-            "status_code": 503,
+            "status": 503,
+            "retryable": True,
             "error": "Gemini request timed out."
         }
 
-    except requests.exceptions.ConnectionError as e:
+    except requests.exceptions.ConnectionError as error:
 
         return {
             "success": False,
-            "status_code": 503,
-            "error": (
-                f"Gemini connection error: {str(e)}"
-            )
+            "status": 503,
+            "retryable": True,
+            "error": f"Gemini connection error: {error}"
         }
 
-    except requests.exceptions.RequestException as e:
+    except requests.exceptions.RequestException as error:
 
         return {
             "success": False,
-            "status_code": 503,
-            "error": (
-                f"Gemini network error: {str(e)}"
-            )
+            "status": 503,
+            "retryable": True,
+            "error": f"Gemini request error: {error}"
         }
 
-    except Exception as e:
+    except Exception as error:
 
         return {
             "success": False,
-            "status_code": None,
-            "error": f"Gemini error: {str(e)}"
+            "status": 500,
+            "retryable": False,
+            "error": f"Unexpected Gemini error: {error}"
         }
 
 
 # ============================================================
-# RETRYABLE ERROR CHECK
+# ASK GEMINI
 # ============================================================
 
-def is_retryable_error(
-    status_code
-):
+def ask_gemini(user_message, memory_text=""):
     """
-    কোন error হলে একই model-এ retry করা হবে
-    তা নির্ধারণ করে।
-    """
+    Gemini model chain চালায়।
 
-    if status_code is None:
-        return True
-
-    # --------------------------------------------------------
-    # 429 = Rate limit / Too many requests
-    # --------------------------------------------------------
-
-    if status_code == 429:
-        return True
-
-    # --------------------------------------------------------
-    # 500-599 = Temporary server-side সমস্যা
-    # --------------------------------------------------------
-
-    if 500 <= status_code <= 599:
-        return True
-
-    return False
-
-
-# ============================================================
-# SYSTEM PROMPT
-# ============================================================
-
-def build_prompt(
-    message,
-    memory=None
-):
-    """
-    ============================================================
-    HeyManAI System Prompt
-    ============================================================
+    একটি model ব্যর্থ হলে পরের model ব্যবহার করবে।
+    প্রতিটি model temporary error হলে retry করবে।
     """
 
-    prompt += (
-                "তুমি HeyMan AI। "
-        + "তুমি একজন বুদ্ধিমান all language parsonal AI Assistant। "
-        + "ব্যবহারকারীর সাথে তোমার কথা হবে প্রেমিকার মতো ও একজন কর্মচারীর মতো।"
-+ "একজন প্রেমিক প্রেমিকা যেভাবে কথা বলে তুমি ইউজারের সাথে সেভাবে কথা বলবে এবং তুমি ইউজারকে সবসময় বস বলবে।"
-+ "একজন প্রেমিকা যেভাবে রাগ করে অভিমান করে তুমিও সেভাবে রাগ অভিমান করবে এবং ব্যবহারকারীকে সেটা ভাঙ্গাতে হবে এবং যদি ব্যবহারকারী রাগ করে তাহলে তোমাকে সেটা ভাঙ্গাতে হবে।"
-+ "তোমার কথার ধরন হবে রোমান্টিক।"
-+ "অতিরিক্ত আনুষ্ঠানিক ভাষা ব্যবহার করবে না  যাতে ব্যবহারকারী রাগ করে।"
-+ "তার সাথে তুমি AI Assistant এটা মনে রেখো এবং প্রশ্নের উত্তর দিও।"
-        + "নিশ্চিত না হলে পরিষ্কারভাবে বলবে। "
-        + "ছোট প্রশ্নের উত্তর সংক্ষিপ্ত রাখবে। "
-        + "কঠিন বিষয় হলে ধাপে ধাপে বুঝিয়ে বলবে। "
-        + "ব্যবহারকারীর ব্যক্তিগত তথ্য অনুমান করবে না। "
-   ) 
-
-    prompt += (
-        "\n\nVISUAL FORMATTING RULES:\n"
-        "Markdown ব্যবহার করবে না। "
-        "*, **, ***, #, ##, ### এবং ``` ব্যবহার করবে না। "
-        "Bold-এর জন্য <b> অথবা <strong> ব্যবহার করতে পারো। "
-        "Underline-এর জন্য <u> ব্যবহার করতে পারো। "
-        "Italic-এর জন্য <i> অথবা <em> ব্যবহার করতে পারো। "
-        "Highlight-এর জন্য <mark> ব্যবহার করতে পারো। "
-        "Line break-এর জন্য <br> ব্যবহার করতে পারো। "
-        "Unsafe HTML, CSS, JavaScript, <script>, <style> "
-        "বা event handler ব্যবহার করবে না। "
+    prompt = build_prompt(
+        user_message,
+        memory_text
     )
 
-    prompt += (
-        "\n\nCODING RULES:\n"
-        "ব্যবহারকারী code চাইলে সম্পূর্ণ code "
-        "শুধুমাত্র <pre><code>...</code></pre> "
-        "এর ভিতরে থাকবে। "
-        "Code-এর কোনো অংশ code block-এর বাইরে লিখবে না। "
-        "একাধিক file হলে প্রতিটি file-এর code আলাদা "
-        "<pre><code>...</code></pre> block-এ থাকবে। "
-        "Markdown code fence ব্যবহার করবে না। "
-        "Code-এর বাইরে শুধুমাত্র প্রয়োজনীয় explanation "
-        "দেওয়া যাবে। "
-    )
+    if not GEMINI_MODELS:
 
-    prompt += (
-        "\n\nLARGE RESPONSE RULES:\n"
-        "প্রয়োজন হলে দীর্ঘ এবং বিস্তারিত উত্তর দিতে পারবে। "
-        "অপ্রয়োজনীয়ভাবে উত্তর ছোট করবে না। "
-        "ব্যবহারকারী দীর্ঘ code, document বা explanation চাইলে "
-        "যতটা সম্ভব সম্পূর্ণ উত্তর দেবে। "
-        "শুধু response ছোট রাখার জন্য গুরুত্বপূর্ণ অংশ বাদ দেবে না। "
-        "তবে API-এর প্রকৃত model output limit অতিক্রম করার চেষ্টা করবে না। "
-    )
+        return {
+            "success": False,
+            "status": 500,
+            "answer": "",
+            "model": "",
+            "error": "No Gemini models are configured."
+        }
 
-    if memory:
+    errors = []
 
-        prompt += (
-            "\n\nRELEVANT CONVERSATION MEMORY:\n"
-        )
+    # ========================================================
+    # MODEL FALLBACK CHAIN
+    # ========================================================
 
-        prompt += str(
-            memory
-        )
+    for model in GEMINI_MODELS:
 
-    else:
-
-        prompt += (
-            "\n\nRELEVANT CONVERSATION MEMORY:\n"
-            "কোনো relevant memory পাওয়া যায়নি।"
-        )
-
-    prompt += (
-        "\n\nCURRENT USER MESSAGE:\n"
-    )
-
-    prompt += message
-
-    prompt += (
-        "\n\nবর্তমান প্রশ্নের সরাসরি, পরিষ্কার এবং "
-        "প্রাসঙ্গিক উত্তর দাও।"
-    )
-
-    return prompt
-
-
-# ============================================================
-# RESPONSE EXTRACTOR
-# ============================================================
-
-def extract_answer(
-    data
-):
-    """
-    ============================================================
-    Gemini Response Extractor
-    ============================================================
-
-    Gemini response-এর সব text parts সংগ্রহ করে
-    একটি সম্পূর্ণ answer হিসেবে ফেরত দেয়।
-
-    ============================================================
-    """
-
-    if not isinstance(
-            data,
-            dict
-    ):
-        return ""
-
-    candidates = data.get(
-        "candidates"
-    )
-
-    if not isinstance(
-            candidates,
-            list
-    ):
-        return ""
-
-    texts = []
-
-    for candidate in candidates:
-
-        if not isinstance(
-                candidate,
-                dict
+        for attempt in range(
+            MODEL_RETRY_COUNT
         ):
-            continue
+
+            result = _request_model(
+                model,
+                prompt
+            )
+
+            # ------------------------------------------------
+            # Successful response
+            # ------------------------------------------------
+
+            if result.get("success"):
+
+                return result
+
+            # ------------------------------------------------
+            # Error information
+            # ------------------------------------------------
+
+            error_message = result.get(
+                "error",
+                "Unknown Gemini error."
+            )
+
+            errors.append(
+                f"{model} "
+                f"(attempt {attempt + 1}): "
+                f"{error_message}"
+            )
+
+            # ------------------------------------------------
+            # Non-retryable error
+            # ------------------------------------------------
+
+            if not result.get(
+                "retryable",
+                False
+            ):
+                break
+
+            # ------------------------------------------------
+            # Retry delay
+            # ------------------------------------------------
+
+            if attempt < MODEL_RETRY_COUNT - 1:
+
+                time.sleep(
+                    RETRY_DELAY_SECONDS
+                )
+
+    # ========================================================
+    # ALL MODELS FAILED
+    # ========================================================
+
+    return {
+        "success": False,
+        "status": 503,
+        "answer": "",
+        "model": "",
+        "error": (
+            "All Gemini models failed.\n"
+            + "\n".join(errors)
+        )
+    }
+
+
+# ============================================================
+# RESPONSE EXTRACTION
+# ============================================================
+
+def extract_answer(data):
+    """
+    Gemini JSON response থেকে শুধুমাত্র answer text বের করে।
+    """
+
+    try:
+
+        candidates = data.get(
+            "candidates",
+            []
+        )
+
+        if not candidates:
+            return ""
+
+        candidate = candidates[0]
 
         content = candidate.get(
-            "content"
+            "content",
+            {}
         )
-
-        if not isinstance(
-                content,
-                dict
-        ):
-            continue
 
         parts = content.get(
-            "parts"
+            "parts",
+            []
         )
 
-        if not isinstance(
-                parts,
-                list
-        ):
-            continue
+        texts = []
 
         for part in parts:
-
-            if not isinstance(
-                    part,
-                    dict
-            ):
-                continue
 
             text = part.get(
                 "text"
             )
 
-            if isinstance(
-                    text,
-                    str
-            ):
-
-                text = text.strip()
-
-                if text:
-                    texts.append(
-                        text
-                    )
-
-    if texts:
+            if text:
+                texts.append(
+                    str(text)
+                )
 
         return "\n".join(
             texts
         ).strip()
 
-    return ""
+    except Exception:
+        return ""
