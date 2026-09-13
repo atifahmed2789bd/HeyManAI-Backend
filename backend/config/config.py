@@ -2,13 +2,8 @@ import os
 
 
 # ============================================================
-# HeyManAI Backend Configuration
+# SERVER
 # ============================================================
-
-
-# ------------------------------------------------------------
-# Server
-# ------------------------------------------------------------
 
 API_HOST = os.getenv(
     "HEYMANAI_API_HOST",
@@ -26,24 +21,78 @@ DEBUG_MODE = (
     os.getenv(
         "HEYMANAI_DEBUG",
         "false"
-    ).lower()
-    == "true"
+    ).lower() == "true"
 )
 
 
-# ------------------------------------------------------------
-# Gemini
-# ------------------------------------------------------------
+# ============================================================
+# GEMINI API
+# ============================================================
 
 GEMINI_API_KEY = os.getenv(
     "GEMINI_API_KEY",
     ""
 )
 
-GEMINI_MODEL = os.getenv(
-    "GEMINI_MODEL",
-    "gemini-3.8-flash"
+
+# ============================================================
+# GEMINI MODEL FALLBACK CHAIN
+# ============================================================
+#
+# Model 1 ব্যর্থ হলে Model 2
+# Model 2 ব্যর্থ হলে Model 3
+# এভাবে সব model পরীক্ষা করা হবে।
+#
+# Render Environment Variable:
+#
+# GEMINI_MODELS=model1,model2,model3
+#
+# অথবা নিচের default list ব্যবহার হবে।
+# ============================================================
+
+_default_models = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+]
+
+
+_model_environment = os.getenv(
+    "GEMINI_MODELS",
+    ""
+).strip()
+
+
+if _model_environment:
+
+    GEMINI_MODELS = [
+        model.strip()
+        for model in _model_environment.split(",")
+        if model.strip()
+    ]
+
+else:
+
+    GEMINI_MODELS = _default_models
+
+
+# ============================================================
+# BACKWARD COMPATIBILITY
+# ============================================================
+#
+# পুরোনো code যদি GEMINI_MODEL ব্যবহার করে,
+# তাহলে প্রথম configured model ব্যবহার করবে।
+# ============================================================
+
+GEMINI_MODEL = (
+    GEMINI_MODELS[0]
+    if GEMINI_MODELS
+    else ""
 )
+
+
+# ============================================================
+# GEMINI API URL
+# ============================================================
 
 GEMINI_API_URL = (
     "https://generativelanguage.googleapis.com/"
@@ -52,24 +101,12 @@ GEMINI_API_URL = (
 )
 
 
-# ------------------------------------------------------------
-# HeyManAI
-# ------------------------------------------------------------
-
-HEYMAN_NAME = "HeyMan"
-
-USER_TITLE = "বস"
-
-
-# ------------------------------------------------------------
-# AI Generation
-# ------------------------------------------------------------
+# ============================================================
+# AI GENERATION
+# ============================================================
 
 AI_TEMPERATURE = 0.7
 
-# Large-response configuration.
-# The UI is designed to display very large answers,
-# but the actual Gemini API limit depends on the model.
 AI_MAX_OUTPUT_TOKENS = int(
     os.getenv(
         "HEYMANAI_MAX_OUTPUT_TOKENS",
@@ -85,42 +122,38 @@ AI_TIMEOUT_SECONDS = int(
 )
 
 
-# ------------------------------------------------------------
-# Large Response Support
-# ------------------------------------------------------------
+# ============================================================
+# LARGE RESPONSE
+# ============================================================
 
 LARGE_RESPONSE_ENABLED = True
 
-# Target capacity for HeyManAI UI.
-# This is a UI/content target, not a guarantee that Gemini
-# will generate this many words in one API response.
 MAX_RESPONSE_WORDS = 50000
 
-# Do not truncate large AI responses in the backend.
 TRUNCATE_LARGE_RESPONSES = False
 
 
-# ------------------------------------------------------------
-# Memory
-# ------------------------------------------------------------
+# ============================================================
+# MEMORY
+# ============================================================
 
 MEMORY_ENABLED = True
 
 MEMORY_RELEVANT_RESULTS = 12
 
 
-# ------------------------------------------------------------
-# Voice
-# ------------------------------------------------------------
+# ============================================================
+# VOICE
+# ============================================================
 
 VOICE_INPUT_ENABLED = True
 
 VOICE_OUTPUT_ENABLED = True
 
 
-# ------------------------------------------------------------
-# System Features
-# ------------------------------------------------------------
+# ============================================================
+# SYSTEM FEATURES
+# ============================================================
 
 TIME_ENABLED = True
 
@@ -129,3 +162,12 @@ DATE_ENABLED = True
 DAY_ENABLED = True
 
 WEATHER_ENABLED = True
+
+
+# ============================================================
+# HEYMANAI IDENTITY
+# ============================================================
+
+HEYMAN_NAME = "HeyMan"
+
+USER_TITLE = "বস"
